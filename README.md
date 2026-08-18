@@ -33,11 +33,7 @@ docker compose up -d
 
 You should eventually see ARM running.
 
-Open a browser on the Ubuntu PC and visit:
-
-```text
-http://localhost:8080
-```
+Open a browser and visit: http://localhost:8080
 
 Check status:
 
@@ -50,8 +46,6 @@ View logs:
 ```bash
 docker compose logs -f
 ```
-
-The ARM Docker documentation uses port 8080 for the web interface.
 
 Stop:
 
