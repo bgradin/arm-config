@@ -1,4 +1,4 @@
-# Automatic Ripping Machine on Ubuntu
+# Automatic Ripping Machine Config
 
 Minimal configuration for running [Automatic Ripping Machine (ARM)](https://github.com/automatic-ripping-machine/automatic-ripping-machine)
 
