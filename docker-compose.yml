@@ -1,0 +1,28 @@
+services:
+  arm:
+    image: automaticrippingmachine/automatic-ripping-machine:latest
+    container_name: arm
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      ARM_UID: "${ARM_UID}"
+      ARM_GID: "${ARM_GID}"
+      NVIDIA_DRIVER_CAPABILITIES: "all"
+
+    gpus: all
+
+    volumes:
+      - "${ARM_HOME}:/home/arm"
+      - "${ARM_MEDIA}:/home/arm/media"
+      - "${ARM_MUSIC}:/home/arm/Music"
+      - "${ARM_LOGS}:/home/arm/logs"
+      - "${ARM_CONFIG}:/etc/arm/config"
+
+    devices:
+      - "/dev/sr0:/dev/sr0"
+      - "/dev/sg2:/dev/sg2"
+
+    privileged: true
