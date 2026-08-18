@@ -31,9 +31,7 @@ Start:
 docker compose up -d
 ```
 
-You should eventually see ARM running.
-
-Open a browser and visit: http://localhost:8080
+You should eventually see ARM running. Open a browser and visit: http://localhost:8080
 
 Check status:
 
