@@ -26,3 +26,44 @@ services:
       - "/dev/sg2:/dev/sg2"
 
     privileged: true
+
+  tv:
+    build:
+      context: ./arm-tv
+    container_name: arm-tv
+    restart: unless-stopped
+    environment:
+      PUID: "${FILEBOT_UID}"
+      PGID: "${FILEBOT_GID}"
+      SETTLE_DOWN_TIME: "${SETTLE_DOWN_TIME:-300}"
+      SETTLE_DOWN_CHECK: "${SETTLE_DOWN_CHECK:-5 minutes ago}"
+    volumes:
+      - "${ARM_MEDIA}/completed/tv/Parks-and-Recreation (2009–2015)_178709333323:/input"
+      - "${ARM_MEDIA}/completed/tv/organized:/output"
+      - "${ARM_LOGS}:/logs"
+      - "./data:/data"
+      - "${FILEBOT_LICENSE_FILE}:/data/filebot/license.txt:ro"
+    command:
+      - /input
+      - --output
+      - /output
+      - --action
+      - move
+      - --conflict
+      - auto
+      - -non-strict
+      - --log-file
+      - /logs/tv-filebot.log
+      - --def
+      - unsorted=n
+      - music=n
+      - artwork=n
+      - clean=y
+      - ut_label=TV
+      - seriesDB=TheMovieDB::TV
+      - "seriesFormat={ ~jellyfin }"
+      - excludeList=/data/filebot/tv-excludes.txt
+
+volumes:
+  filebot-data:
+    name: arm-filebot-data

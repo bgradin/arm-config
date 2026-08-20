@@ -8,6 +8,7 @@ Minimal configuration for running [Automatic Ripping Machine (ARM)](https://gith
 * Docker + Docker compose
 * Free space
 * .env file with correct settings
+* Create a `data/filebot` folder and make sure the user passed to FileBot has ownership
 
 ## Environment Variables
 
@@ -22,13 +23,18 @@ All directory paths below are absolute paths on the host machine.
 | ARM_MUSIC  | Directory for ARM music rips |
 | ARM_LOGS   | ARM log directory |
 | ARM_CONFIG | ARM config directory |
+| FILEBOT_UID | User ID of FileBot user |
+| FILEBOT_GID | Group ID of FileBot user |
+| FILEBOT_LICENSE_FILE | FileBot license file |
+| SETTLE_DOWN_TIME | FileBot processing delay |
+| SETTLE_DOWN_CHECK | FileBot processing delay |
 
 ## Usage
 
 Start:
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 You should eventually see ARM running. Open a browser and visit: http://localhost:8080
@@ -43,6 +49,7 @@ View logs:
 
 ```bash
 docker compose logs -f
+# FileBot's detailed log is also written to $ARM_LOGS/tv-filebot.log
 ```
 
 Stop:
