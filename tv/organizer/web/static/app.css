@@ -1,0 +1,107 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  line-height: 1.45;
+}
+
+a { color: #5c9ded; }
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.card {
+  border: 1px solid #7777;
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .75rem;
+}
+
+label {
+  display: block;
+  font-size: .9rem;
+  color: #888;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: .45rem;
+  max-width: 100%;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+button { cursor: pointer; }
+
+.checkbox input { width: auto; }
+
+.state {
+  padding: .2rem .55rem;
+  border-radius: 999px;
+  background: #7773;
+}
+
+.confidence { font-variant-numeric: tabular-nums; }
+
+.error {
+  background: #a002;
+  border-color: #c55;
+  white-space: pre-wrap;
+}
+
+.ok {
+  background: #0a02;
+  border-color: #5a5;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #7774;
+  padding: .5rem;
+}
+
+code,
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muted { color: #888; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+}
+
+details { margin: .5rem 0; }

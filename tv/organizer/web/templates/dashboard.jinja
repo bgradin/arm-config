@@ -1,0 +1,36 @@
+{% extends "base.jinja" %}
+
+{% block content %}
+  <div class="card">
+    <h2>Ingest jobs</h2>
+    <p>Rips stay outside the Jellyfin library until every required decision is resolved.</p>
+    <table>
+      <thead>
+        <tr><th>Disc/show</th><th>Format</th><th>State</th><th>Created</th></tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+          <tr>
+            <td><a href="/jobs/{{ job.id }}">{{ job.get("show_name") or job.disc_fingerprint[:12] }}</a></td>
+            <td>{{ job.disc_type }}</td>
+            <td><span class="state">{{ job.state }}</span></td>
+            <td>{{ job.created_at }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4">No jobs yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Import captured manifest</h2>
+    <form method="post" action="/import">
+      <div class="grid">
+        <label>Manifest path<input name="manifest_path" required></label>
+        <label>Completed rip directory<input name="rip_root" required></label>
+      </div>
+      <p><button>Import and analyze</button></p>
+    </form>
+  </div>
+{% endblock %}

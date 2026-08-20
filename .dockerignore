@@ -1,0 +1,9 @@
+.git
+.env
+**/__pycache__
+*.py[cod]
+*.sqlite3*
+.coverage
+docs
+tests
+README.md

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bdmv_parser.py
+BDMV navigation parser
 
 Parse Blu-ray BDMV navigation files:
 
@@ -10,10 +10,10 @@ Parse Blu-ray BDMV navigation files:
 No third-party dependencies.
 
 Examples:
-    python bdmv_parser.py /path/to/BDMV/index.bdmv
-    python bdmv_parser.py /path/to/BDMV/MovieObject.bdmv
-    python bdmv_parser.py /path/to/BDMV
-    python bdmv_parser.py /path/to/BDMV --pretty
+    python -m tv.organizer.bdmv /path/to/BDMV/index.bdmv
+    python -m tv.organizer.bdmv /path/to/BDMV/MovieObject.bdmv
+    python -m tv.organizer.bdmv /path/to/BDMV
+    python -m tv.organizer.bdmv /path/to/BDMV --pretty
 
 The BDMV directory mode parses both files when present.
 
@@ -469,6 +469,10 @@ def parse_index_bdmv(data: bytes) -> dict[str, Any]:
 class HDMVInstruction:
     raw_hex: str
 
+    group_name: str
+    sub_group_name: str
+    operation: str
+
     op_cnt: int
     grp: int
     sub_grp: int
@@ -482,6 +486,144 @@ class HDMVInstruction:
 
     dst: int
     src: int
+
+    dst_operand: Optional[dict[str, Any]]
+    src_operand: Optional[dict[str, Any]]
+
+
+HDMV_GROUPS = {
+    0: "branch",
+    1: "compare",
+    2: "set",
+}
+
+HDMV_BRANCH_SUBGROUPS = {
+    0: "goto",
+    1: "jump",
+    2: "play",
+}
+
+HDMV_GOTO_OPERATIONS = {
+    0: "nop",
+    1: "goto",
+    2: "break",
+}
+
+HDMV_JUMP_OPERATIONS = {
+    0: "jump_object",
+    1: "jump_title",
+    2: "call_object",
+    3: "call_title",
+    4: "resume",
+}
+
+HDMV_PLAY_OPERATIONS = {
+    0: "play_playlist",
+    1: "play_playlist_at_play_item",
+    2: "play_playlist_at_mark",
+    3: "terminate_playlist",
+    4: "link_play_item",
+    5: "link_mark",
+}
+
+HDMV_COMPARE_OPERATIONS = {
+    1: "bit_set",
+    2: "equal",
+    3: "not_equal",
+    4: "greater_or_equal",
+    5: "greater_than",
+    6: "less_or_equal",
+    7: "less_than",
+}
+
+HDMV_SET_OPERATIONS = {
+    1: "move",
+    2: "swap",
+    3: "add",
+    4: "subtract",
+    5: "multiply",
+    6: "divide",
+    7: "modulo",
+    8: "random",
+    9: "and",
+    10: "or",
+    11: "xor",
+    12: "bit_set",
+    13: "bit_clear",
+    14: "shift_left",
+    15: "shift_right",
+}
+
+HDMV_SET_SYSTEM_OPERATIONS = {
+    1: "set_stream",
+    2: "set_navigation_timer",
+    3: "set_button_page",
+    4: "enable_button",
+    5: "disable_button",
+    6: "set_secondary_stream",
+    7: "popup_off",
+    8: "still_on",
+    9: "still_off",
+    10: "set_output_mode",
+    11: "set_stream_secondary",
+    16: "set_system_0x10",
+}
+
+
+def decode_hdmv_operation(
+    grp: int,
+    sub_grp: int,
+    branch_opt: int,
+    cmp_opt: int,
+    set_opt: int,
+) -> tuple[str, str, str]:
+    group_name = HDMV_GROUPS.get(grp, f"unknown_{grp}")
+    sub_group_name = f"unknown_{sub_grp}"
+    operation = "unknown"
+
+    if grp == 0:
+        sub_group_name = HDMV_BRANCH_SUBGROUPS.get(
+            sub_grp,
+            f"unknown_{sub_grp}",
+        )
+        tables = {
+            0: HDMV_GOTO_OPERATIONS,
+            1: HDMV_JUMP_OPERATIONS,
+            2: HDMV_PLAY_OPERATIONS,
+        }
+        operation = tables.get(sub_grp, {}).get(
+            branch_opt,
+            f"unknown_branch_{branch_opt}",
+        )
+    elif grp == 1:
+        sub_group_name = "compare"
+        operation = HDMV_COMPARE_OPERATIONS.get(
+            cmp_opt,
+            f"unknown_compare_{cmp_opt}",
+        )
+    elif grp == 2:
+        sub_group_name = "set" if sub_grp == 0 else "set_system"
+        table = HDMV_SET_OPERATIONS if sub_grp == 0 else HDMV_SET_SYSTEM_OPERATIONS
+        operation = table.get(set_opt, f"unknown_set_{set_opt}")
+
+    return group_name, sub_group_name, operation
+
+
+def decode_hdmv_operand(value: int, immediate: bool) -> dict[str, Any]:
+    if immediate:
+        return {"type": "immediate", "value": value}
+    if value & 0x80000000:
+        number = value & 0x7F
+        return {
+            "type": "psr",
+            "number": number,
+            "raw": value,
+        }
+    return {
+        "type": "gpr",
+        "number": value & 0xFFF,
+        "raw": value,
+    }
 
 
 def parse_hdmv_instruction(raw: bytes) -> HDMVInstruction:
@@ -512,9 +654,6 @@ def parse_hdmv_instruction(raw: bytes) -> HDMVInstruction:
             f"HDMV command must be exactly 12 bytes, got {len(raw)}"
         )
 
-    # Treat the 12 bytes as one big-endian 96-bit bit string.
-    value = int.from_bytes(raw, "big")
-
     # First 32-bit instruction word.
     instruction = int.from_bytes(raw[0:4], "big")
 
@@ -532,8 +671,19 @@ def parse_hdmv_instruction(raw: bytes) -> HDMVInstruction:
     dst = int.from_bytes(raw[4:8], "big")
     src = int.from_bytes(raw[8:12], "big")
 
+    group_name, sub_group_name, operation = decode_hdmv_operation(
+        grp,
+        sub_grp,
+        branch_opt,
+        cmp_opt,
+        set_opt,
+    )
+
     return HDMVInstruction(
         raw_hex=raw.hex(),
+        group_name=group_name,
+        sub_group_name=sub_group_name,
+        operation=operation,
         op_cnt=op_cnt,
         grp=grp,
         sub_grp=sub_grp,
@@ -544,6 +694,16 @@ def parse_hdmv_instruction(raw: bytes) -> HDMVInstruction:
         set_opt=set_opt,
         dst=dst,
         src=src,
+        dst_operand=(
+            decode_hdmv_operand(dst, imm_op1)
+            if op_cnt > 0
+            else None
+        ),
+        src_operand=(
+            decode_hdmv_operand(src, imm_op2)
+            if op_cnt > 1
+            else None
+        ),
     )
 
 

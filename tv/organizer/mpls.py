@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-parse_mpls.py
+MPLS playlist parser
 
 Parse Blu-ray MPLS (Movie Playlist) files.
 
@@ -23,11 +23,11 @@ Features:
   - Optional JSON file output
 
 Usage:
-    python parse_mpls.py 00001.mpls
+    python -m tv.organizer.mpls 00001.mpls
 
-    python parse_mpls.py 00001.mpls -o playlist.json
+    python -m tv.organizer.mpls 00001.mpls -o playlist.json
 
-    python parse_mpls.py 00001.mpls --compact
+    python -m tv.organizer.mpls 00001.mpls --compact
 
 No third-party packages are required.
 """

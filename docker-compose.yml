@@ -1,6 +1,9 @@
 services:
   arm:
-    image: automaticrippingmachine/automatic-ripping-machine:latest
+    build:
+      context: .
+      dockerfile: arm/Dockerfile
+    image: arm:local
     container_name: arm
     restart: unless-stopped
 
@@ -11,6 +14,10 @@ services:
       ARM_UID: "${ARM_UID}"
       ARM_GID: "${ARM_GID}"
       NVIDIA_DRIVER_CAPABILITIES: "all"
+      TV_DATA: /var/lib/tv
+      TV_INBOX: /home/arm/media/completed/tv
+      TV_LIBRARY: /home/arm/media/completed/tv/organized
+      TV_CAPTURE_MENU_ASSETS: "${TV_CAPTURE_MENU_ASSETS:-false}"
 
     gpus: all
 
@@ -20,6 +27,8 @@ services:
       - "${ARM_MUSIC}:/home/arm/Music"
       - "${ARM_LOGS}:/home/arm/logs"
       - "${ARM_CONFIG}:/etc/arm/config"
+      - "./arm/arm.yaml:/etc/arm/config/arm.yaml:ro"
+      - "${ARM_MEDIA}/.tv:/var/lib/tv"
 
     devices:
       - "/dev/sr0:/dev/sr0"
@@ -29,41 +38,32 @@ services:
 
   tv:
     build:
-      context: ./arm-tv
+      context: .
+      dockerfile: tv/Dockerfile
+    image: arm-tv:local
     container_name: arm-tv
     restart: unless-stopped
+    user: "${ARM_UID}:${ARM_GID}"
+    ports:
+      - "${TV_PORT:-8081}:8081"
     environment:
-      PUID: "${FILEBOT_UID}"
-      PGID: "${FILEBOT_GID}"
-      SETTLE_DOWN_TIME: "${SETTLE_DOWN_TIME:-300}"
-      SETTLE_DOWN_CHECK: "${SETTLE_DOWN_CHECK:-5 minutes ago}"
+      TV_DATA: /var/lib/tv
+      TV_INBOX: /home/arm/media/completed/tv
+      TV_LIBRARY: /home/arm/media/completed/tv/organized
+      TV_BIND: 0.0.0.0
+      TV_PORT: 8081
+      TV_WORKER: "true"
+      TV_HASH_ASSETS: "${TV_HASH_ASSETS:-true}"
+      TV_AUTH_TOKEN: "${TV_AUTH_TOKEN:-}"
+      TMDB_READ_TOKEN: "${TMDB_READ_TOKEN:-}"
+      JELLYFIN_EPISODE_VERSIONS: "${JELLYFIN_EPISODE_VERSIONS:-false}"
+      TZ: "${TZ:-America/Los_Angeles}"
     volumes:
-      - "${ARM_MEDIA}/completed/tv/Parks-and-Recreation (2009–2015)_178709333323:/input"
-      - "${ARM_MEDIA}/completed/tv/organized:/output"
-      - "${ARM_LOGS}:/logs"
-      - "./data:/data"
-      - "${FILEBOT_LICENSE_FILE}:/data/filebot/license.txt:ro"
-    command:
-      - /input
-      - --output
-      - /output
-      - --action
-      - move
-      - --conflict
-      - auto
-      - -non-strict
-      - --log-file
-      - /logs/tv-filebot.log
-      - --def
-      - unsorted=n
-      - music=n
-      - artwork=n
-      - clean=y
-      - ut_label=TV
-      - seriesDB=TheMovieDB::TV
-      - "seriesFormat={ ~jellyfin }"
-      - excludeList=/data/filebot/tv-excludes.txt
-
-volumes:
-  filebot-data:
-    name: arm-filebot-data
+      - "${ARM_MEDIA}/completed/tv:/home/arm/media/completed/tv"
+      - "${ARM_MEDIA}/.tv:/var/lib/tv"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

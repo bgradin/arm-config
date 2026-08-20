@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arm-tv"
+version = "0.1.0"
+description = "ARM TV sidekick service"
+requires-python = ">=3.10"
+dependencies = ["Jinja2>=3.1,<4"]
+
+[project.scripts]
+tv = "tv.organizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tv*"]
+
+[tool.setuptools.package-data]
+"tv.organizer.web" = ["templates/*.jinja", "static/*.css", "static/*.js"]
