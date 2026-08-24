@@ -64,7 +64,12 @@ def quick_file_fingerprint(path: Path) -> str:
 
 
 def media_files(root: Path, excluded_roots: Iterable[Path] = ()) -> list[Path]:
+    root = root.resolve()
     excluded = [path.resolve() for path in excluded_roots]
+    # A rip directory can itself live inside the in-place library root. In
+    # that case the root argument is already the source scope and must not be
+    # excluded wholesale.
+    excluded = [path for path in excluded if path != root and path not in root.parents]
     result: list[Path] = []
     if not root.exists():
         return result

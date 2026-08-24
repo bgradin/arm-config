@@ -8,12 +8,29 @@
     <script src="/static/app.js" defer></script>
   </head>
   <body>
-    <header>
-      <h1><a href="/">ARM TV Organizer</a></h1>
-      <span class="muted">Disc-aware review</span>
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">ARM</p>
+        <h1><a href="/">TV Organizer</a></h1>
+      </div>
+      <span class="muted">Review and organize</span>
     </header>
-    <main>
+    <main id="page-content">
       {% block content %}{% endblock %}
     </main>
+    <aside class="task-tray" id="task-tray" aria-live="polite">
+      <button class="task-tray-toggle" type="button" aria-expanded="false" aria-controls="task-details">
+        <span class="task-spinner" aria-hidden="true"></span>
+        <span>Tasks</span>
+        <span class="task-count" data-task-count>0</span>
+      </button>
+      <div class="task-details" id="task-details" hidden>
+        <div class="task-details-header">
+          <strong>Background tasks</strong>
+          <span class="muted" data-task-summary>Idle</span>
+        </div>
+        <div class="task-list" data-task-list></div>
+      </div>
+    </aside>
   </body>
 </html>

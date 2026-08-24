@@ -1,180 +1,111 @@
 {% extends "base.jinja" %}
 
+{% macro field_suggestion(field) %}
+  {% set suggestion = field_suggestions.get(field) %}
+  {% if suggestion and suggestion.status == "pending" %}
+    <form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="suggestion-form" data-xhr>
+      <input type="hidden" name="action" value="accepted">
+      {% if suggestion.kind == "show_name" %}{% set suggested_value = suggestion.value.get("name") %}
+      {% elif suggestion.kind == "media_type" %}{% set suggested_value = suggestion.value.get("media_type") %}
+      {% else %}{% set suggested_value = suggestion.value.get("season") %}{% endif %}
+      <button class="suggestion-link" type="submit">Suggested: {{ suggested_value }}</button>
+    </form>
+  {% endif %}
+{% endmacro %}
+
 {% block content %}
-  <h2>{{ job.get("show_name") or "Unidentified disc" }}</h2>
-  <p class="muted">Job {{ job.id }} · {{ job.disc_type }} · fingerprint {{ job.disc_fingerprint }}</p>
-
-  {% if job.get("error") %}
-    <div class="card error">{{ job.error }}</div>
-  {% endif %}
-  {% if approval_errors %}
-    <div class="card error">
-      <strong>Approval blockers</strong>
-      <ul>
-        {% for error in approval_errors %}<li>{{ error }}</li>{% endfor %}
-      </ul>
+  <section class="job-hero">
+    <div>
+      <p class="eyebrow">Job</p>
+      <h2>{{ job.get("show_name") or "Unidentified disc" }}</h2>
+      <p class="muted">{{ job.disc_type|capitalize }} capture · {{ job.disc_fingerprint[:12] }}</p>
     </div>
-  {% else %}
-    <div class="card ok">All approval invariants are satisfied.</div>
-  {% endif %}
+    <span class="state state-{{ job.state }}">{{ job.state|replace("_", " ")|capitalize }}</span>
+  </section>
 
-  <div class="card">
-    <h2>Identity <span class="state">{{ job.state }}</span></h2>
-    <form method="post" action="{{ base_path }}/resolve">
+  {% if job.get("error") %}<div class="notice error">{{ job.error }}</div>{% endif %}
+
+  <section class="card" id="actions">
+    <div class="section-heading">
+      <div><p class="eyebrow">Next steps</p><h2>Actions</h2></div>
+      <span class="muted">Organization runs in the background</span>
+    </div>
+    <div class="actions">
+      <form method="post" action="{{ base_path }}/analyze" data-xhr><button>Analyze suggestions</button></form>
+      <form method="post" action="{{ base_path }}/retry" data-xhr><button class="button-secondary">Retry failed tasks</button></form>
+    </div>
+    <p class="hint">Save a show, season, and episode assignment to start moving that episode into the library automatically.</p>
+  </section>
+
+  <section class="card" id="show-info">
+    <div class="section-heading"><div><p class="eyebrow">Metadata</p><h2>Show info</h2></div></div>
+    <form method="post" action="{{ base_path }}/resolve" data-xhr>
       <div class="grid">
         <label>Media type
-          <select name="resolved_media_type">
-            <option value="">Unresolved</option>
-            <option value="tv"{% if job.get("resolved_media_type") == "tv" %} selected{% endif %}>TV</option>
-            <option value="movie"{% if job.get("resolved_media_type") == "movie" %} selected{% endif %}>Movie</option>
-          </select>
-        </label>
-        <label>Provider<input name="show_provider" value="{{ job.get('show_provider') or '' }}"></label>
-        <label>Provider ID<input name="show_id" value="{{ job.get('show_id') or '' }}"></label>
-        <label>Show name<input name="show_name" value="{{ job.get('show_name') or '' }}"></label>
+          <select name="resolved_media_type"><option value="">Choose one</option><option value="tv"{% if job.get("resolved_media_type") == "tv" %} selected{% endif %}>TV show</option><option value="movie"{% if job.get("resolved_media_type") == "movie" %} selected{% endif %}>Movie</option></select>
+        </label>{{ field_suggestion("resolved_media_type") }}
+        <label>Provider<input name="show_provider" value="{{ job.get('show_provider') or '' }}" placeholder="tmdb"></label>
+        <label>Provider ID<input name="show_id" value="{{ job.get('show_id') or '' }}" placeholder="12345"></label>
+        <label>Name<input name="show_name" value="{{ job.get('show_name') or '' }}" placeholder="Show name"></label>{{ field_suggestion("show_name") }}
         <label>First-air year<input type="number" name="show_year" value="{{ job.get('show_year') or '' }}"></label>
-        <label>Season<input type="number" min="0" name="season" value="{{ job.get('season') if job.get('season') is not none else '' }}"></label>
+        <label>Season<input type="number" min="0" name="season" value="{{ job.get('season') if job.get('season') is not none else '' }}"></label>{{ field_suggestion("season") }}
       </div>
-      <p><button>Save identity</button></p>
+      <p><button>Save show info</button></p>
     </form>
 
-    <form method="get">
-      <div class="actions">
-        <input name="q" value="{{ tmdb_query }}" placeholder="Search TMDB TV">
-        <button>Search TMDB</button>
-      </div>
+    <form method="get" action="{{ base_path }}" class="search-form" data-xhr>
+      <label>Find this show on TMDB<input name="q" value="{{ tmdb_query }}" placeholder="Search TV shows"></label>
+      <button class="button-secondary">Search</button>
     </form>
     {% if tmdb_error %}<p class="error">{{ tmdb_error }}</p>{% endif %}
     {% for item in tmdb_results %}
       {% set first_air = item.get("first_air_date") or "" %}
-      {% set year = first_air[:4] %}
-      <form method="post" action="{{ base_path }}/resolve" class="card">
-        <strong>{{ item.get("name") }}</strong> <span class="muted">{{ year }}</span>
-        <p>{{ item.get("overview") }}</p>
-        <input type="hidden" name="resolved_media_type" value="tv">
-        <input type="hidden" name="show_provider" value="tmdb">
-        <input type="hidden" name="show_id" value="{{ item.get('id') }}">
-        <input type="hidden" name="show_name" value="{{ item.get('name') }}">
-        <input type="hidden" name="show_year" value="{{ year }}">
-        <button>Select show</button>
+      <form method="post" action="{{ base_path }}/resolve" class="result-row" data-xhr>
+        <div><strong>{{ item.get("name") }}</strong> <span class="muted">{{ first_air[:4] }}</span><p class="muted">{{ item.get("overview") }}</p></div>
+        <input type="hidden" name="resolved_media_type" value="tv"><input type="hidden" name="show_provider" value="tmdb"><input type="hidden" name="show_id" value="{{ item.get('id') }}"><input type="hidden" name="show_name" value="{{ item.get('name') }}"><input type="hidden" name="show_year" value="{{ first_air[:4] }}">
+        <button>Select</button>
       </form>
     {% endfor %}
-  </div>
+  </section>
 
-  <h2>Suggestions</h2>
-  {% for suggestion in suggestions %}
-    <div class="card">
-      <h3>
-        {{ suggestion.kind }}
-        <span class="confidence">{{ "%.0f%%"|format(suggestion.confidence * 100) }}</span>
-        <span class="state">{{ suggestion.status }}</span>
-      </h3>
-      <pre>{{ suggestion.value|json_pretty }}</pre>
-      <details>
-        <summary>Decision evidence</summary>
-        <ul>
-          {% for item in suggestion.evidence %}<li>{{ item.get("message") }}</li>{% endfor %}
-        </ul>
-        {% if suggestion.contradictions %}
-          <strong>Contradictions</strong>
-          <ul>
-            {% for item in suggestion.contradictions %}<li>{{ item.get("message") }}</li>{% endfor %}
-          </ul>
-        {% endif %}
-      </details>
-      <p class="muted">{{ suggestion.analyzer }} {{ suggestion.analyzer_version }}</p>
-      {% if suggestion.status == "pending" %}
-        <form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="actions">
-          <button name="action" value="accepted">Accept</button>
-          <button name="action" value="rejected">Reject</button>
-        </form>
-      {% endif %}
-      {% if suggestion.kind == "episode_order" and suggestion.status != "rejected" and suggestion.confidence >= high_order_confidence %}
-        <form method="post" action="{{ base_path }}/apply-order" class="actions">
-          <input type="hidden" name="suggestion_id" value="{{ suggestion.id }}">
-          <label>Starting episode<input type="number" min="1" name="start" required></label>
-          <button>Apply order to mapped assets</button>
-        </form>
-      {% endif %}
+  <section class="card" id="assets">
+    <div class="section-heading"><div><p class="eyebrow">Captured media</p><h2>Assets</h2></div><span class="muted">{{ assets|length }} files</span></div>
+    <div class="asset-list">
+      {% for asset in assets %}
+        {% set assignment = assignments_by_asset.get(asset.id, {}) %}
+        {% set mapping = asset.get("metadata", {}).get("source_mapping", {}) %}
+        <article class="asset-card">
+          <div class="asset-heading"><div><strong>{{ asset.path|basename }}</strong><p class="muted">{{ asset.get("duration_seconds")|minutes }} min{% if mapping.get("method") %} · {{ mapping.get("method") }}{% endif %}</p></div><span class="state state-{{ asset.disposition }}">{{ asset.disposition|capitalize }}</span></div>
+          <form method="post" action="{{ base_path }}/assets/{{ asset.id }}" data-xhr>
+            <div class="grid">
+              <label>What is it?<select name="disposition">{% for disposition in dispositions %}<option value="{{ disposition }}"{% if asset.disposition == disposition %} selected{% endif %}>{{ disposition|capitalize }}</option>{% endfor %}</select></label>
+              <label>Season<input type="number" min="0" name="season" value="{{ assignment.get('season') if assignment.get('season') is not none else (job.get('season') if job.get('season') is not none else '') }}"></label>
+              <label>Episode<input type="number" min="1" name="episode_start" value="{{ assignment.get('episode_start') or '' }}"></label>
+              <label>End episode<input type="number" min="1" name="episode_end" value="{{ assignment.get('episode_end') or '' }}"></label>
+              <label>Part<input type="number" min="1" name="part" value="{{ assignment.get('part') or '' }}"></label>
+              <label>Episode title<input name="episode_title" value="{{ assignment.get('episode_title') or '' }}"></label>
+              <label>Edition<input name="edition_name" value="{{ asset.get('edition_name') or '' }}"></label>
+              <label class="checkbox"><input type="checkbox" name="preferred" value="1"{% if asset.get("preferred") %} checked{% endif %}> Preferred version</label>
+            </div>
+            <p><button>Save asset</button></p>
+          </form>
+        </article>
+      {% else %}<p class="muted">No assets imported yet.</p>{% endfor %}
     </div>
-  {% else %}
-    <p>No suggestions.</p>
-  {% endfor %}
+  </section>
 
-  <div class="card">
-    <h2>Ripped assets</h2>
-    <table>
-      <thead><tr><th>Asset</th><th>Duration</th><th>Assignment</th></tr></thead>
-      <tbody>
-        {% for asset in assets %}
-          {% set assignment = assignments_by_asset.get(asset.id, {}) %}
-          {% set mapping = asset.get("metadata", {}).get("source_mapping", {}) %}
-          <tr>
-            <td>
-              <strong>{{ asset.path|basename }}</strong><br>
-              <span class="muted">{{ asset.get("source_key") or "unmapped" }} · {{ mapping.get("method") or "" }}</span>
-            </td>
-            <td>{{ asset.get("duration_seconds")|minutes }} min</td>
-            <td>
-              <form method="post" action="{{ base_path }}/assets/{{ asset.id }}">
-                <div class="grid">
-                  <label>Disposition
-                    <select name="disposition">
-                      {% for disposition in dispositions %}
-                        <option value="{{ disposition }}"{% if asset.disposition == disposition %} selected{% endif %}>{{ disposition }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <label>Season<input type="number" min="0" name="season" value="{{ assignment.get('season') if assignment.get('season') is not none else (job.get('season') if job.get('season') is not none else '') }}"></label>
-                  <label>Episode<input type="number" min="1" name="episode_start" value="{{ assignment.get('episode_start') or '' }}"></label>
-                  <label>End episode<input type="number" min="1" name="episode_end" value="{{ assignment.get('episode_end') or '' }}"></label>
-                  <label>Part<input type="number" min="1" name="part" value="{{ assignment.get('part') or '' }}"></label>
-                  <label>Episode title<input name="episode_title" value="{{ assignment.get('episode_title') or '' }}"></label>
-                  <label>Edition<input name="edition_name" value="{{ asset.get('edition_name') or '' }}"></label>
-                  <label class="checkbox"><input type="checkbox" name="preferred" value="1"{% if asset.get("preferred") %} checked{% endif %}> Preferred edition</label>
-                </div>
-                <p><button>Save asset</button></p>
-              </form>
-            </td>
-          </tr>
-        {% else %}
-          <tr><td colspan="3">No assets imported.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>Workflow</h2>
-    <div class="actions">
-      <form method="post" action="{{ base_path }}/analyze"><button>Reanalyze</button></form>
-      <form method="post" action="{{ base_path }}/retry"><button>Retry failed work</button></form>
-      <form method="post" action="{{ base_path }}/plan"><button>Create dry-run plan</button></form>
-      <form method="post" action="{{ base_path }}/approve"><button>Approve latest plan</button></form>
-      <form method="post" action="{{ base_path }}/commit" data-confirm="Commit the approved plan to the Jellyfin library?"><button>Commit latest plan</button></form>
-    </div>
-    {% if plan %}
-      <details><summary>Latest dry-run plan</summary><pre>{{ plan.plan|json_pretty }}</pre></details>
-    {% endif %}
-  </div>
-
-  <details class="card">
-    <summary>Source titles</summary>
-    <table>
-      <thead><tr><th>Source</th><th>Duration</th><th>Topology</th></tr></thead>
-      <tbody>
-        {% for source in sources %}
-          <tr>
-            <td>{{ source.source_key }}</td>
-            <td>{{ source.get("duration_seconds")|minutes }} min</td>
-            <td><code>{{ source.get("topology_hash") or "" }}</code></td>
-          </tr>
-        {% else %}
-          <tr><td colspan="3">No source titles captured.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <details class="card suggestions-panel"><summary><strong>More suggestions</strong><span class="muted">Review evidence and playback order</span></summary>
+    {% for suggestion in suggestions if suggestion.kind not in ("show_name", "media_type", "season") %}
+      <article class="suggestion-card"><div class="asset-heading"><div><strong>{{ suggestion.kind|replace("_", " ")|capitalize }}</strong><p class="muted">{{ suggestion.analyzer }}</p></div><span class="confidence">{{ "%.0f%%"|format(suggestion.confidence * 100) }}</span></div>
+        {% if suggestion.kind == "episode_candidates" %}<p class="hint">These files look like episodes. Accepting marks them as episodes; assign numbers below.</p>{% endif %}
+        {% if suggestion.kind == "episode_order" %}<p class="hint">Accepting applies this order to the mapped assets.</p>{% endif %}
+        {% if suggestion.status == "pending" %}<form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="actions" data-xhr>{% if suggestion.kind == "episode_order" %}<label class="compact-label">Start at <input type="number" min="1" name="start" value="1"></label>{% endif %}<button name="action" value="accepted">Accept</button><button class="button-secondary" name="action" value="rejected">Reject</button></form>{% else %}<span class="state">{{ suggestion.status|capitalize }}</span>{% endif %}
+        <details><summary>Evidence</summary><ul>{% for item in suggestion.evidence %}<li>{{ item.get("message") }}</li>{% endfor %}</ul>{% if suggestion.contradictions %}<p class="muted">Caveats</p><ul>{% for item in suggestion.contradictions %}<li>{{ item.get("message") }}</li>{% endfor %}</ul>{% endif %}</details>
+      </article>
+    {% else %}<p class="muted">No additional suggestions.</p>{% endfor %}
   </details>
+
+  <details class="card"><summary>Move history <span class="muted">{{ moves|length }} recorded</span></summary><pre>{{ moves|json_pretty }}</pre></details>
+  <details class="card"><summary>Source details</summary><table><thead><tr><th>Source</th><th>Duration</th><th>Topology</th></tr></thead><tbody>{% for source in sources %}<tr><td>{{ source.source_key }}</td><td>{{ source.get("duration_seconds")|minutes }} min</td><td><code>{{ source.get("topology_hash") or "" }}</code></td></tr>{% else %}<tr><td colspan="3">No source details.</td></tr>{% endfor %}</tbody></table></details>
   <details class="card"><summary>Audit history</summary><pre>{{ audit|json_pretty }}</pre></details>
-  <details class="card"><summary>Background tasks</summary><pre>{{ tasks|json_pretty }}</pre></details>
 {% endblock %}

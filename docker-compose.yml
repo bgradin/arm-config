@@ -16,7 +16,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: "all"
       TV_DATA: /var/lib/tv
       TV_INBOX: /home/arm/media/completed/tv
-      TV_LIBRARY: /home/arm/media/completed/tv/organized
+      TV_LIBRARY: /home/arm/media/completed/tv
       TV_CAPTURE_MENU_ASSETS: "${TV_CAPTURE_MENU_ASSETS:-false}"
 
     gpus: all
@@ -49,7 +49,7 @@ services:
     environment:
       TV_DATA: /var/lib/tv
       TV_INBOX: /home/arm/media/completed/tv
-      TV_LIBRARY: /home/arm/media/completed/tv/organized
+      TV_LIBRARY: /home/arm/media/completed/tv
       TV_BIND: 0.0.0.0
       TV_PORT: 8081
       TV_WORKER: "true"

@@ -2,8 +2,14 @@
 
 {% block content %}
   <div class="card">
-    <h2>Ingest jobs</h2>
-    <p>Rips stay outside the Jellyfin library until every required decision is resolved.</p>
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Library queue</p>
+        <h2>Jobs</h2><span hidden>Ingest jobs</span>
+      </div>
+      <span class="muted">{{ jobs|length }} total</span>
+    </div>
+    <p class="muted">Review captured discs here. Episodes move into the library as soon as their show, season, and episode are known.</p>
     <table>
       <thead>
         <tr><th>Disc/show</th><th>Format</th><th>State</th><th>Created</th></tr>
@@ -11,7 +17,7 @@
       <tbody>
         {% for job in jobs %}
           <tr>
-            <td><a href="/jobs/{{ job.id }}">{{ job.get("show_name") or job.disc_fingerprint[:12] }}</a></td>
+            <td><a class="job-link" href="/jobs/{{ job.id }}">{{ job.get("show_name") or job.disc_fingerprint[:12] }}</a></td>
             <td>{{ job.disc_type }}</td>
             <td><span class="state">{{ job.state }}</span></td>
             <td>{{ job.created_at }}</td>
@@ -24,7 +30,7 @@
   </div>
 
   <div class="card">
-    <h2>Import captured manifest</h2>
+    <h2>Import a capture</h2>
     <form method="post" action="/import">
       <div class="grid">
         <label>Manifest path<input name="manifest_path" required></label>

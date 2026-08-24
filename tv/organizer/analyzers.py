@@ -30,6 +30,7 @@ class AnalysisContext:
 class Analyzer:
     name = "base"
     version = "1.0.0"
+    output_kinds: frozenset[str] = frozenset()
 
     def analyze(self, context: AnalysisContext) -> list[Suggestion]:
         raise NotImplementedError
@@ -37,6 +38,7 @@ class Analyzer:
 
 class ClassificationAnalyzer(Analyzer):
     name = "episode_shape"
+    output_kinds = frozenset({"media_type", "episode_candidates"})
 
     def analyze(self, context: AnalysisContext) -> list[Suggestion]:
         cluster = episode_cluster(context.sources)
@@ -118,6 +120,7 @@ class ClassificationAnalyzer(Analyzer):
 
 class DiscIdentityAnalyzer(Analyzer):
     name = "disc_identity"
+    output_kinds = frozenset({"show_name", "season"})
 
     _season = re.compile(r"(?:season|series|\bs)\s*[-_. ]?(\d{1,2})\b", re.I)
 
@@ -193,6 +196,7 @@ class OrderAnalyzer(Analyzer):
     """Adapter keeping order inference behind independently replaceable modules."""
 
     name = "order_strategies"
+    output_kinds = frozenset({"episode_order"})
 
     def __init__(
         self,
@@ -252,6 +256,7 @@ def _topology_differences(
 
 class DuplicateEditionAnalyzer(Analyzer):
     name = "content_relationships"
+    output_kinds = frozenset({"duplicate_group", "stream_variant_group", "edition_group"})
 
     def analyze(self, context: AnalysisContext) -> list[Suggestion]:
         suggestions: list[Suggestion] = []
@@ -430,6 +435,7 @@ _EPISODE = re.compile(r"S(?P<season>\d+)E(?P<start>\d+)(?:-?E(?P<end>\d+))?", re
 
 class LibraryContextAnalyzer(Analyzer):
     name = "library_context"
+    output_kinds = frozenset({"library_snapshot", "starting_episode"})
 
     def analyze(self, context: AnalysisContext) -> list[Suggestion]:
         if not context.job.get("show_id") or context.job.get("season") is None:
@@ -551,8 +557,24 @@ def analyze_job(
         assets=database.list_assets(job_id),
     )
     suggestions = []
+    accepted_kinds = {
+        item["kind"]
+        for item in database.list_suggestions(job_id, include_superseded=True)
+        if item["status"] == "accepted"
+    }
     try:
         for analyzer in analyzers:
+            if analyzer.output_kinds & accepted_kinds:
+                database.audit(
+                    "analysis.skipped_accepted",
+                    {
+                        "analyzer": analyzer.name,
+                        "kinds": sorted(analyzer.output_kinds & accepted_kinds),
+                    },
+                    job_id,
+                    "worker",
+                )
+                continue
             suggestions.extend(analyzer.analyze(context))
         records = [suggestion.to_record() for suggestion in suggestions]
         database.add_suggestions(job_id, job["manifest_hash"], records)

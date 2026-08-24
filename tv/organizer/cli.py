@@ -10,10 +10,8 @@ from .collector import collect_disc
 from .config import Config
 from .db import Database
 from .importer import attach_assets, import_manifest, register_manifest
-from .planner import build_plan, commit_plan
 from .service import serve
 from .worker import Worker
-from .workflow import approve_job
 
 
 def _database(config: Config) -> Database:
@@ -26,7 +24,7 @@ def _database(config: Config) -> Database:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tv",
-        description="Disc-aware TV ingest and organization service",
+        description="Disc-aware TV job and organization service",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("init-db", help="Initialize the SQLite database")
@@ -63,14 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = subparsers.add_parser("analyze", help="Analyze a job immediately")
     analyze.add_argument("job_id")
-    plan = subparsers.add_parser("plan", help="Create a dry-run organization plan")
-    plan.add_argument("job_id")
-    approve = subparsers.add_parser("approve", help="Approve the latest dry-run plan")
-    approve.add_argument("job_id")
-    commit = subparsers.add_parser("commit", help="Commit an approved plan")
-    commit.add_argument("job_id")
-    commit.add_argument("--plan-id")
-    subparsers.add_parser("list", help="List ingest jobs")
+    subparsers.add_parser("list", help="List jobs")
     return parser
 
 
@@ -129,18 +120,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"job_id": args.job_id, "suggestions": suggestions}, indent=2))
         elif args.command == "analyze":
             print(json.dumps(analyze_job(config, database, args.job_id), indent=2))
-        elif args.command == "plan":
-            print(json.dumps(build_plan(config, database, args.job_id), indent=2))
-        elif args.command == "approve":
-            approve_job(config, database, args.job_id)
-            print(json.dumps({"job_id": args.job_id, "state": "approved"}))
-        elif args.command == "commit":
-            print(
-                json.dumps(
-                    commit_plan(config, database, args.job_id, args.plan_id),
-                    indent=2,
-                )
-            )
         elif args.command == "list":
             print(json.dumps(database.list_jobs(), indent=2))
         return 0

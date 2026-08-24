@@ -139,6 +139,25 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_queue
     ON tasks(status, created_at);
 
+CREATE TABLE IF NOT EXISTS organization_moves (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    UNIQUE(job_id, asset_id, target_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_organization_moves_job
+    ON organization_moves(job_id, status, created_at);
+
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -380,6 +399,18 @@ class Database:
                 actor,
                 connection,
             )
+            resolved = connection.execute(
+                "SELECT resolved_media_type, show_provider, show_id, show_name, season "
+                "FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if resolved and resolved["resolved_media_type"] == "tv" and all(
+                resolved[field] not in (None, "")
+                for field in ("show_provider", "show_id", "show_name", "season")
+            ):
+                self._enqueue_unique_connection(
+                    connection, "organize", job_id, {}, requeue_complete=True
+                )
 
     def set_rip_root(self, job_id: str, rip_root: Path) -> None:
         with self.connect() as connection:
@@ -598,6 +629,10 @@ class Database:
                 actor,
                 connection,
             )
+            if disposition == "episode":
+                self._enqueue_unique_connection(
+                    connection, "organize", job_id, {}, requeue_complete=True
+                )
 
     def list_assignments(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -745,10 +780,51 @@ class Database:
                 result.append(item)
             return result
 
+    @staticmethod
+    def _enqueue_unique_connection(
+        connection: sqlite3.Connection,
+        kind: str,
+        job_id: str | None,
+        payload: Any = None,
+        *,
+        requeue_complete: bool = False,
+    ) -> str:
+        now = utc_now()
+        existing = connection.execute(
+            "SELECT id, status FROM tasks WHERE kind = ? AND job_id IS ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (kind, job_id),
+        ).fetchone()
+        if existing and existing["status"] != "failed":
+            if existing["status"] == "complete" and requeue_complete:
+                connection.execute(
+                    "UPDATE tasks SET status = 'queued', attempts = 0, "
+                    "error = NULL, payload_json = ?, updated_at = ? WHERE id = ?",
+                    (canonical_json(payload or {}), now, existing["id"]),
+                )
+            else:
+                return str(existing["id"])
+            return str(existing["id"])
+        if existing:
+            connection.execute(
+                "UPDATE tasks SET status = 'queued', attempts = 0, "
+                "error = NULL, payload_json = ?, updated_at = ? WHERE id = ?",
+                (canonical_json(payload or {}), now, existing["id"]),
+            )
+            return str(existing["id"])
+        task_id = str(uuid.uuid4())
+        connection.execute(
+            "INSERT INTO tasks "
+            "(id, job_id, kind, payload_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (task_id, job_id, kind, canonical_json(payload or {}), now, now),
+        )
+        return task_id
+
     def enqueue(self, kind: str, job_id: str | None, payload: Any = None) -> str:
         task_id = str(uuid.uuid4())
         now = utc_now()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 "INSERT INTO tasks "
                 "(id, job_id, kind, payload_json, created_at, updated_at) "
@@ -758,34 +834,23 @@ class Database:
         return task_id
 
     def enqueue_unique(
-        self, kind: str, job_id: str | None, payload: Any = None
+        self,
+        kind: str,
+        job_id: str | None,
+        payload: Any = None,
+        *,
+        requeue_complete: bool = False,
     ) -> str:
         """Idempotently enqueue a lifecycle event for one job and task kind."""
 
-        now = utc_now()
         with self.transaction(immediate=True) as connection:
-            existing = connection.execute(
-                "SELECT id, status FROM tasks WHERE kind = ? AND job_id IS ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (kind, job_id),
-            ).fetchone()
-            if existing and existing["status"] != "failed":
-                return str(existing["id"])
-            if existing:
-                connection.execute(
-                    "UPDATE tasks SET status = 'queued', attempts = 0, "
-                    "error = NULL, payload_json = ?, updated_at = ? WHERE id = ?",
-                    (canonical_json(payload or {}), now, existing["id"]),
-                )
-                return str(existing["id"])
-            task_id = str(uuid.uuid4())
-            connection.execute(
-                "INSERT INTO tasks "
-                "(id, job_id, kind, payload_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (task_id, job_id, kind, canonical_json(payload or {}), now, now),
+            return self._enqueue_unique_connection(
+                connection,
+                kind,
+                job_id,
+                payload,
+                requeue_complete=requeue_complete,
             )
-            return task_id
 
     def list_tasks(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -799,6 +864,136 @@ class Database:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 result.append(item)
             return result
+
+    def list_all_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                result.append(item)
+            return result
+
+    def list_active_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE status IN ('queued', 'running') "
+                "ORDER BY created_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                result.append(item)
+            return result
+
+    def list_moves(self, job_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM organization_moves WHERE job_id = ? "
+                    "ORDER BY created_at DESC",
+                    (job_id,),
+                ).fetchall()
+            ]
+
+    def prepare_move(
+        self,
+        job_id: str,
+        asset_id: str,
+        source_path: str,
+        target_path: str,
+        size_bytes: int,
+        sha256: str | None,
+    ) -> dict[str, Any]:
+        """Durably record an intended move before touching the filesystem."""
+
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM organization_moves WHERE job_id = ? "
+                "AND asset_id = ? AND target_path = ?",
+                (job_id, asset_id, target_path),
+            ).fetchone()
+            if row is not None:
+                return dict(row)
+            move_id = str(uuid.uuid4())
+            now = utc_now()
+            connection.execute(
+                "INSERT INTO organization_moves "
+                "(id, job_id, asset_id, source_path, target_path, size_bytes, "
+                "sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    move_id,
+                    job_id,
+                    asset_id,
+                    source_path,
+                    target_path,
+                    size_bytes,
+                    sha256,
+                    now,
+                ),
+            )
+            return dict(
+                connection.execute(
+                    "SELECT * FROM organization_moves WHERE id = ?", (move_id,)
+                ).fetchone()
+            )
+
+    def start_move(self, move_id: str) -> None:
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE organization_moves SET status = 'moving', started_at = ?, "
+                "error = NULL WHERE id = ? AND status != 'moved'",
+                (utc_now(), move_id),
+            )
+
+    def complete_move(self, move_id: str) -> dict[str, Any]:
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM organization_moves WHERE id = ?", (move_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(move_id)
+            if row["status"] != "moved":
+                connection.execute(
+                    "UPDATE organization_moves SET status = 'moved', error = NULL, "
+                    "completed_at = ? WHERE id = ?",
+                    (utc_now(), move_id),
+                )
+                connection.execute(
+                    "UPDATE assets SET path = ? WHERE id = ? AND job_id = ?",
+                    (row["target_path"], row["asset_id"], row["job_id"]),
+                )
+            self.audit(
+                "asset.moved",
+                {
+                    "move_id": move_id,
+                    "asset_id": row["asset_id"],
+                    "source": row["source_path"],
+                    "target": row["target_path"],
+                },
+                row["job_id"],
+                "worker",
+                connection,
+            )
+            return dict(
+                connection.execute(
+                    "SELECT * FROM organization_moves WHERE id = ?", (move_id,)
+                ).fetchone()
+            )
+
+    def fail_move(self, move_id: str, error: str) -> None:
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE organization_moves SET status = 'failed', error = ? "
+                "WHERE id = ?",
+                (error, move_id),
+            )
 
     def retry_failed_tasks(self, job_id: str) -> int:
         with self.transaction(immediate=True) as connection:

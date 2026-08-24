@@ -4,7 +4,7 @@ This repository runs [Automatic Ripping Machine (ARM)](https://github.com/automa
 
 ## Runtime layout
 
-ARM remains the only privileged container. It owns mounting, ripping, and ejecting. Its small bridge writes captures and queue events to `${ARM_MEDIA}/.tv`. The `tv` container has no device access and sees only the completed TV staging tree, the organizer data directory, and the nested `organized` library directory.
+ARM remains the only privileged container. It owns mounting, ripping, and ejecting. Its small bridge writes captures and queue events to `${ARM_MEDIA}/.tv`. The `tv` container has no device access and sees only the completed TV tree and organizer data directory; episode files are renamed into their show/season folders in that same tree.
 
 ```text
 ARM identify -> capture manifest -> ARM rip -> durable completion task
@@ -12,10 +12,17 @@ ARM identify -> capture manifest -> ARM rip -> durable completion task
                                                    v
                                           analyze -> review UI
                                                    |
-                                              approve + plan
+                                          show + episode info
                                                    |
                                                    v
-                                             library commit
+                                      background atomic move
+```
+
+Episode organization stays in the completed-TV tree and keeps every season
+under one year-qualified show folder:
+
+```text
+completed/tv/Show Name (2020) [tmdbid-123]/Season 01/S01E01.mkv
 ```
 
 ## Configuration
@@ -45,7 +52,7 @@ When `TV_AUTH_TOKEN` is set, put the service behind a reverse proxy that supplie
 Before the first start, create writable host directories:
 
 ```bash
-mkdir -p "${ARM_MEDIA}/completed/tv/organized" "${ARM_MEDIA}/.tv"
+mkdir -p "${ARM_MEDIA}/completed/tv" "${ARM_MEDIA}/.tv"
 chown -R "${ARM_UID}:${ARM_GID}" "${ARM_MEDIA}/completed/tv" "${ARM_MEDIA}/.tv"
 ```
 
@@ -81,10 +88,8 @@ python3 -m tv complete JOB_ID --rip-root /path/to/completed/rip
 python3 -m tv serve
 python3 -m tv list
 
-# After resolving every review decision, validate before approval and commit.
-python3 -m tv plan JOB_ID
-python3 -m tv approve JOB_ID
-python3 -m tv commit JOB_ID
+# Save a show, season, and episode assignment in the review UI. The worker
+# records and performs the move into TV_LIBRARY automatically.
 ```
 
 ## Test

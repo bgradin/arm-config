@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -62,28 +61,17 @@ def _restore_target(
     source: Path,
     expected_hash: str | None,
 ) -> None:
-    """Restore a moved target to staging, including across filesystems."""
+    """Restore a moved target to staging with an atomic rename."""
 
     if expected_hash and hash_file(target) != expected_hash:
         raise CommitError(f"Interrupted target hash does not match plan: {target}")
     source.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if target.stat().st_dev == source.parent.stat().st_dev:
-            os.replace(target, source)
-            return
-    except OSError:
-        pass
-    temporary = source.with_name(f".{source.name}.restore.tmp")
-    if temporary.exists():
-        temporary.unlink()
-    shutil.copy2(target, temporary)
-    if expected_hash and hash_file(temporary) != expected_hash:
-        temporary.unlink(missing_ok=True)
-        raise CommitError(f"Restored source hash does not match plan: {source}")
-    with temporary.open("rb") as handle:
-        os.fsync(handle.fileno())
-    os.replace(temporary, source)
-    target.unlink()
+    if target.stat().st_dev != source.parent.stat().st_dev:
+        raise CommitError(
+            "The staging and library roots must be on the same filesystem "
+            "for a true move"
+        )
+    os.replace(target, source)
 
 
 def _recover_interrupted_commit(
@@ -103,7 +91,7 @@ def _recover_interrupted_commit(
         if consumed.exists():
             if source.exists():
                 raise CommitError(
-                    f"Both source and rollback copy exist after interruption: {source}"
+                    f"Both source and target exist after interruption: {source}"
                 )
             os.replace(consumed, source)
             if target.exists():
@@ -138,8 +126,7 @@ def _show_components(job: dict[str, Any]) -> tuple[str, str]:
     provider = str(job.get("show_provider") or "tmdb").lower()
     identifier = safe_component(str(job["show_id"]))
     folder = f"{show}{year} [{provider}id-{identifier}]"
-    filename = f"{show}{year}"
-    return folder, filename
+    return folder, ""
 
 
 def _episode_token(assignment: dict[str, Any]) -> str:
@@ -164,7 +151,7 @@ def build_plan(config: Config, database: Database, job_id: str) -> dict[str, Any
     assignments = {
         item["asset_id"]: item for item in database.list_assignments(job_id)
     }
-    show_folder, filename_prefix = _show_components(job)
+    show_folder, _ = _show_components(job)
     show_root = ensure_within(config.library_root / show_folder, config.library_root)
     library_snapshot = _library_snapshot(show_root)
     occupied = _occupied_episodes(library_snapshot)
@@ -249,9 +236,7 @@ def build_plan(config: Config, database: Database, job_id: str) -> dict[str, Any
                 if assignment.get("part") is not None
                 else ""
             )
-            filename = (
-                f"{filename_prefix} {token}{title}{edition}{part}{source.suffix.lower()}"
-            )
+            filename = f"{token}{title}{edition}{part}{source.suffix.lower()}"
             target = show_root / f"Season {int(assignment['season']):02d}" / filename
         else:
             raise PlanError(f"Unsupported disposition {disposition!r}")
@@ -364,34 +349,10 @@ def commit_plan(
                     {"method": "rename", "source": source, "target": target}
                 )
             else:
-                temporary = target.with_name(f".{target.name}.{job_id}.tmp")
-                if temporary.exists():
-                    temporary.unlink()
-                shutil.copy2(source, temporary)
-                expected = operation.get("sha256") or hash_file(source)
-                if hash_file(temporary) != expected:
-                    temporary.unlink(missing_ok=True)
-                    raise CommitError(f"Copied file hash mismatch: {target}")
-                with temporary.open("rb") as handle:
-                    os.fsync(handle.fileno())
-                os.replace(temporary, target)
-                journal.append(
-                    {
-                        "method": "copy",
-                        "source": source,
-                        "target": target,
-                        "consumed": None,
-                    }
+                raise CommitError(
+                    "The staging and library roots must be on the same filesystem "
+                    "for a true move"
                 )
-        for item in journal:
-            if item["method"] != "copy":
-                continue
-            source = item["source"]
-            consumed = source.with_name(f".{source.name}.{job_id}.consumed")
-            if consumed.exists():
-                raise CommitError(f"Consumed-source staging path exists: {consumed}")
-            os.replace(source, consumed)
-            item["consumed"] = consumed
         database.complete_plan(
             plan_record["id"],
             job_id,
@@ -404,22 +365,6 @@ def commit_plan(
                 for item in journal
             ],
         )
-        cleanup_errors = []
-        for item in journal:
-            consumed = item.get("consumed")
-            if not consumed:
-                continue
-            try:
-                consumed.unlink()
-            except OSError as cleanup_exc:
-                cleanup_errors.append(str(cleanup_exc))
-        if cleanup_errors:
-            database.audit(
-                "plan.cleanup_deferred",
-                {"errors": cleanup_errors},
-                job_id,
-                "system",
-            )
         return {
             "plan_id": plan_record["id"],
             "moved": len(journal),
@@ -431,14 +376,9 @@ def commit_plan(
             source = item["source"]
             target = item["target"]
             try:
-                consumed = item.get("consumed")
-                if consumed and consumed.exists() and not source.exists():
-                    os.replace(consumed, source)
                 if item["method"] == "rename" and target.exists() and not source.exists():
                     source.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(target, source)
-                elif item["method"] == "copy" and target.exists():
-                    target.unlink()
             except OSError as rollback_exc:
                 rollback_errors.append(str(rollback_exc))
         message = str(exc)

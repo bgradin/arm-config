@@ -57,7 +57,7 @@ class Config:
             os.environ.get("TV_INBOX", "./inbox")
         ).expanduser()
         library_root = Path(
-            os.environ.get("TV_LIBRARY", "./library")
+            os.environ.get("TV_LIBRARY", str(inbox_root))
         ).expanduser()
         return cls(
             data_root=data_root.resolve(),

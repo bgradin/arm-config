@@ -23,11 +23,17 @@ ALLOWED_TRANSITIONS = {
     "ripping": {"awaiting_assets", "failed"},
     "awaiting_assets": {"analyzing", "failed"},
     "analyzing": {"needs_review", "failed"},
-    "needs_review": {"analyzing", "approved", "failed"},
+    "needs_review": {"analyzing", "approved", "organizing", "failed"},
     "approved": {"needs_review", "analyzing", "organizing", "failed"},
     "organizing": {"complete", "approved", "failed"},
-    "complete": {"analyzing"},
-    "failed": {"capturing", "awaiting_assets", "analyzing", "approved"},
+    "complete": {"analyzing", "organizing"},
+    "failed": {
+        "capturing",
+        "awaiting_assets",
+        "analyzing",
+        "approved",
+        "organizing",
+    },
 }
 
 ASSET_DISPOSITIONS = {

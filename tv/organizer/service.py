@@ -48,9 +48,36 @@ class Application:
             "suggestions": self.database.list_suggestions(job_id),
             "audit": self.database.list_audit(job_id),
             "tasks": self.database.list_tasks(job_id),
+            "moves": self.database.list_moves(job_id),
+            "field_suggestions": self._field_suggestions(
+                self.database.list_suggestions(job_id)
+            ),
             "approval_errors": errors,
             "plan": plan,
         }
+
+    @staticmethod
+    def _field_suggestions(
+        suggestions: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Pick one useful, highest-confidence suggestion for each form field."""
+
+        fields: dict[str, dict[str, Any]] = {}
+        kinds = {
+            "show_name": "show_name",
+            "media_type": "resolved_media_type",
+            "season": "season",
+        }
+        for suggestion in suggestions:
+            if suggestion["status"] in {"rejected", "superseded"}:
+                continue
+            field = kinds.get(suggestion["kind"])
+            if not field:
+                continue
+            current = fields.get(field)
+            if current is None or suggestion["confidence"] > current["confidence"]:
+                fields[field] = suggestion
+        return fields
 
     def dashboard(self) -> bytes:
         return render_template(
@@ -184,6 +211,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/jobs":
                 self._json(HTTPStatus.OK, self.app.database.list_jobs())
+            elif parsed.path == "/api/tasks":
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "tasks": self.app.database.list_active_tasks(),
+                        "recent": self.app.database.list_all_tasks(50),
+                    },
+                )
             elif match := re.fullmatch(r"/api/jobs/([0-9a-f-]+)", parsed.path):
                 self._json(HTTPStatus.OK, self.app.job_detail(match.group(1)))
             elif parsed.path == "/api/tmdb/search":
@@ -211,7 +246,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise ValueError(
                 "Order evidence is below the high-confidence application threshold"
             )
-        start = int(data["start"])
+        start = int(data.get("start") or 1)
         job = self.app.database.get_job(job_id)
         assert job is not None
         assets = self.app.database.list_assets(job_id)
@@ -235,6 +270,73 @@ class RequestHandler(BaseHTTPRequestHandler):
                 episode_start=episode,
             )
             episode += 1
+
+    def _apply_episode_candidates(
+        self, job_id: str, suggestion: dict[str, Any]
+    ) -> None:
+        value = suggestion.get("value") or []
+        source_ids = value.get("source_ids", []) if isinstance(value, dict) else value
+        job = self.app.database.get_job(job_id)
+        if not job:
+            raise KeyError(job_id)
+        assets = self.app.database.list_assets(job_id)
+        source_assets: dict[str, list[dict[str, Any]]] = {}
+        for asset in assets:
+            source_id = asset.get("source_title_id")
+            if source_id:
+                source_assets.setdefault(str(source_id), []).append(asset)
+        assignments = {
+            item["asset_id"]: item
+            for item in self.app.database.list_assignments(job_id)
+        }
+        for source_id in source_ids:
+            mapped = source_assets.get(str(source_id), [])
+            if len(mapped) != 1:
+                raise ValueError(
+                    f"Source {source_id} does not map to exactly one asset"
+                )
+            asset = mapped[0]
+            previous = assignments.get(asset["id"], {})
+            self.app.database.assign_asset(
+                job_id,
+                asset["id"],
+                disposition="episode",
+                season=previous.get("season") or job.get("season"),
+                episode_start=previous.get("episode_start"),
+                episode_end=previous.get("episode_end"),
+                part=previous.get("part"),
+                episode_title=previous.get("episode_title"),
+                edition_name=asset.get("edition_name") or previous.get("edition_name"),
+                preferred=bool(asset.get("preferred")),
+            )
+
+    def _decide_suggestion(
+        self, job_id: str, suggestion: dict[str, Any], action: str, data: dict[str, Any]
+    ) -> None:
+        self.app.database.decide_suggestion(job_id, suggestion["id"], action)
+        if action != "accepted":
+            return
+        kind = suggestion["kind"]
+        if kind == "media_type":
+            self.app.database.resolve_job(
+                job_id,
+                {"resolved_media_type": suggestion["value"].get("media_type")},
+            )
+        elif kind == "show_name":
+            self.app.database.resolve_job(
+                job_id, {"show_name": suggestion["value"].get("name")}
+            )
+        elif kind == "season":
+            self.app.database.resolve_job(
+                job_id, {"season": suggestion["value"].get("season")}
+            )
+        elif kind == "episode_candidates":
+            self._apply_episode_candidates(job_id, suggestion)
+        elif kind == "episode_order":
+            # Accepting an order now also applies it. The optional starting
+            # number is supplied by the compact order control in the UI; API
+            # clients get the safe default of episode one.
+            self._apply_order(job_id, {**data, "suggestion_id": suggestion["id"]})
 
     def do_POST(self) -> None:
         if not self._authorized():
@@ -261,7 +363,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 else:
                     self._redirect(f"/jobs/{job_id}")
                 return
-            match = re.fullmatch(r"/jobs/([0-9a-f-]+)/(.*)", parsed.path)
+            api_request = parsed.path.startswith("/api/")
+            action_path = parsed.path[4:] if api_request else parsed.path
+            match = re.fullmatch(r"/jobs/([0-9a-f-]+)/(.*)", action_path)
             if not match:
                 raise KeyError(parsed.path)
             job_id, action = match.groups()
@@ -304,24 +408,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not suggestion:
                     raise KeyError(suggestion_id)
                 decision = data.get("action")
-                self.app.database.decide_suggestion(
-                    job_id, suggestion_id, decision
-                )
-                if decision == "accepted":
-                    if suggestion["kind"] == "media_type":
-                        self.app.database.resolve_job(
-                            job_id,
-                            {
-                                "resolved_media_type": suggestion["value"].get(
-                                    "media_type"
-                                )
-                            },
-                        )
-                    elif suggestion["kind"] == "season":
-                        self.app.database.resolve_job(
-                            job_id,
-                            {"season": suggestion["value"].get("season")},
-                        )
+                self._decide_suggestion(job_id, suggestion, decision, data)
             elif asset_match := re.fullmatch(r"assets/([0-9a-f-]+)", action):
                 self.app.database.assign_asset(
                     job_id,
@@ -337,7 +424,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
             else:
                 raise KeyError(action)
-            self._redirect(f"/jobs/{job_id}")
+            if api_request:
+                self._json(
+                    HTTPStatus.OK,
+                    {"job": self.app.job_detail(job_id)},
+                )
+            else:
+                self._redirect(f"/jobs/{job_id}")
         except Exception as exc:
             traceback.print_exc()
             self._handle_error(exc)
