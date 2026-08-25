@@ -60,7 +60,7 @@ class Application:
     def _field_suggestions(
         suggestions: list[dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
-        """Pick one useful, highest-confidence suggestion for each form field."""
+        """Pick high-confidence suggestions to show inline by form field."""
 
         fields: dict[str, dict[str, Any]] = {}
         kinds = {
@@ -70,6 +70,8 @@ class Application:
         }
         for suggestion in suggestions:
             if suggestion["status"] in {"rejected", "superseded"}:
+                continue
+            if suggestion["confidence"] < HIGH_ORDER_CONFIDENCE:
                 continue
             field = kinds.get(suggestion["kind"])
             if not field:
@@ -242,10 +244,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise KeyError(data["suggestion_id"])
         if suggestion["kind"] != "episode_order":
             raise ValueError("Suggestion is not an episode order")
-        if suggestion["confidence"] < HIGH_ORDER_CONFIDENCE:
-            raise ValueError(
-                "Order evidence is below the high-confidence application threshold"
-            )
         start = int(data.get("start") or 1)
         job = self.app.database.get_job(job_id)
         assert job is not None
@@ -313,6 +311,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _decide_suggestion(
         self, job_id: str, suggestion: dict[str, Any], action: str, data: dict[str, Any]
     ) -> None:
+        if action == "deleted":
+            self.app.database.delete_suggestion(job_id, suggestion["id"])
+            return
         self.app.database.decide_suggestion(job_id, suggestion["id"], action)
         if action != "accepted":
             return
@@ -369,6 +370,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not match:
                 raise KeyError(parsed.path)
             job_id, action = match.groups()
+            if action == "delete":
+                self.app.database.delete_job(job_id)
+                if api_request:
+                    self._json(
+                        HTTPStatus.OK,
+                        {"deleted_job_id": job_id},
+                    )
+                else:
+                    self._redirect("/")
+                return
             if action == "resolve":
                 values = {}
                 for key in (

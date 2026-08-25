@@ -4,7 +4,6 @@ from ..domain import Evidence, Suggestion
 from .base import (
     OrderContext,
     OrderStrategy,
-    asset_mapping_issues,
     content_relationship_issues,
     episode_cluster,
 )
@@ -52,11 +51,10 @@ class BdjRuntimeTraceStrategy(OrderStrategy):
             ordered = [by_playlist[item] for item in playlist_ids]
         except KeyError:
             return []
-        issues = asset_mapping_issues(ordered, context.assets)
         relationships = content_relationship_issues(ordered)
         branches = trace.get("unresolved_branches", [])
         play_all = trace.get("intent") == "play_all"
-        eligible = not issues and not relationships and not branches and play_all
+        eligible = not relationships and not branches and play_all
         return [
             Suggestion(
                 kind="episode_order",
@@ -75,17 +73,6 @@ class BdjRuntimeTraceStrategy(OrderStrategy):
                     )
                 ],
                 contradictions=(
-                    [
-                        Evidence(
-                            "asset_mapping_not_one_to_one",
-                            "The traced sequence does not map one-to-one to rip assets.",
-                            -0.39,
-                            {"issues": issues},
-                        )
-                    ]
-                    if issues
-                    else []
-                ) + (
                     [
                         Evidence(
                             "unresolved_content_relationship",

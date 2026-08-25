@@ -4,7 +4,6 @@ from ..domain import Evidence, Suggestion
 from .base import (
     OrderContext,
     OrderStrategy,
-    asset_mapping_issues,
     content_relationship_issues,
     episode_cluster,
 )
@@ -39,11 +38,10 @@ class DvdNavigationStrategy(OrderStrategy):
             ordered = [by_key[key] for key in source_keys]
         except KeyError:
             return []
-        issues = asset_mapping_issues(ordered, context.assets)
         relationships = content_relationship_issues(ordered)
         branches = trace.get("unresolved_branches", [])
         play_all = trace.get("intent") == "play_all"
-        high_confidence = not issues and not branches and not relationships and play_all
+        high_confidence = not branches and not relationships and play_all
         return [
             Suggestion(
                 kind="episode_order",
@@ -62,18 +60,6 @@ class DvdNavigationStrategy(OrderStrategy):
                     )
                 ],
                 contradictions=[
-                    *(
-                        [
-                            Evidence(
-                                "asset_mapping_not_one_to_one",
-                                "The trace does not map one-to-one to rip assets.",
-                                -0.35,
-                                {"issues": issues},
-                            )
-                        ]
-                        if issues
-                        else []
-                    ),
                     *(
                         [
                             Evidence(

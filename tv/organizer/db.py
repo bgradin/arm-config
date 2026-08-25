@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     season INTEGER,
     error TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint
@@ -84,7 +85,8 @@ CREATE TABLE IF NOT EXISTS suggestions (
     input_manifest_hash TEXT NOT NULL,
     revision INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_suggestions_job
@@ -173,7 +175,7 @@ CREATE TABLE IF NOT EXISTS tmdb_cache (
     fetched_at TEXT NOT NULL
 );
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 """
 
 
@@ -199,6 +201,15 @@ class Database:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
+            for table in ("jobs", "suggestions"):
+                columns = {
+                    row[1]
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if "deleted_at" not in columns:
+                    connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT"
+                    )
 
     @contextmanager
     def transaction(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
@@ -281,12 +292,54 @@ class Database:
             )
         return job_id
 
-    def get_job(self, job_id: str) -> dict[str, Any] | None:
+    def get_job(
+        self, job_id: str, *, include_deleted: bool = False
+    ) -> dict[str, Any] | None:
         with self.connect() as connection:
+            where = "id = ?" if include_deleted else "id = ? AND deleted_at IS NULL"
             return _decoded(
                 connection.execute(
-                    "SELECT * FROM jobs WHERE id = ?", (job_id,)
+                    f"SELECT * FROM jobs WHERE {where}", (job_id,)
                 ).fetchone()
+            )
+
+    def delete_job(self, job_id: str, actor: str = "user") -> None:
+        """Soft-delete a job and retain all of its review records."""
+
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT state, deleted_at FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            if row["deleted_at"] is not None:
+                return
+            running = connection.execute(
+                "SELECT kind FROM tasks WHERE job_id = ? AND status = 'running' "
+                "LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if running is not None:
+                raise ValueError(
+                    f"Cannot delete job while {running['kind']} task is running"
+                )
+
+            self.audit(
+                "job.deleted",
+                {"job_id": job_id, "state": row["state"]},
+                actor=actor,
+                connection=connection,
+            )
+            deleted_at = utc_now()
+            connection.execute(
+                "UPDATE jobs SET deleted_at = ?, updated_at = ? "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (deleted_at, deleted_at, job_id),
+            )
+            connection.execute(
+                "UPDATE tasks SET status = 'cancelled', error = ?, updated_at = ? "
+                "WHERE job_id = ? AND status = 'queued'",
+                ("job was deleted", deleted_at, job_id),
             )
 
     def find_existing_job(
@@ -301,6 +354,7 @@ class Database:
             if arm_job_id:
                 row = connection.execute(
                     "SELECT * FROM jobs WHERE arm_job_id = ? "
+                    "AND deleted_at IS NULL "
                     "ORDER BY created_at DESC LIMIT 1",
                     (arm_job_id,),
                 ).fetchone()
@@ -308,7 +362,8 @@ class Database:
                     return dict(row)
             row = connection.execute(
                 "SELECT * FROM jobs WHERE manifest_path = ? AND manifest_hash = ? "
-                "AND rip_root IS ? ORDER BY created_at DESC LIMIT 1",
+                "AND rip_root IS ? AND deleted_at IS NULL "
+                "ORDER BY created_at DESC LIMIT 1",
                 (
                     str(manifest_path),
                     manifest_hash,
@@ -320,7 +375,8 @@ class Database:
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM jobs WHERE deleted_at IS NULL "
+                "ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
@@ -696,7 +752,11 @@ class Database:
     def list_suggestions(
         self, job_id: str, include_superseded: bool = False
     ) -> list[dict[str, Any]]:
-        where = "job_id = ?" if include_superseded else "job_id = ? AND status != 'superseded'"
+        where = (
+            "job_id = ? AND deleted_at IS NULL"
+            if include_superseded
+            else "job_id = ? AND deleted_at IS NULL AND status != 'superseded'"
+        )
         with self.connect() as connection:
             rows = connection.execute(
                 f"SELECT * FROM suggestions WHERE {where} "
@@ -711,10 +771,14 @@ class Database:
                 result.append(item)
             return result
 
-    def get_suggestion(self, suggestion_id: str) -> dict[str, Any] | None:
+    def get_suggestion(
+        self, suggestion_id: str, *, include_deleted: bool = False
+    ) -> dict[str, Any] | None:
         with self.connect() as connection:
+            where = "id = ?" if include_deleted else "id = ? AND deleted_at IS NULL"
             row = connection.execute(
-                "SELECT * FROM suggestions WHERE id = ?", (suggestion_id,)
+                f"SELECT * FROM suggestions WHERE {where}",
+                (suggestion_id,),
             ).fetchone()
             if row is None:
                 return None
@@ -722,6 +786,35 @@ class Database:
             for key in ("value_json", "evidence_json", "contradictions_json"):
                 item[key.removesuffix("_json")] = json.loads(item.pop(key))
             return item
+
+    def delete_suggestion(
+        self, job_id: str, suggestion_id: str, actor: str = "user"
+    ) -> None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT kind, status FROM suggestions "
+                "WHERE id = ? AND job_id = ? AND deleted_at IS NULL",
+                (suggestion_id, job_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(suggestion_id)
+            deleted_at = utc_now()
+            connection.execute(
+                "UPDATE suggestions SET deleted_at = ? "
+                "WHERE id = ? AND job_id = ? AND deleted_at IS NULL",
+                (deleted_at, suggestion_id, job_id),
+            )
+            self.audit(
+                "suggestion.deleted",
+                {
+                    "suggestion_id": suggestion_id,
+                    "kind": row["kind"],
+                    "status": row["status"],
+                },
+                job_id,
+                actor,
+                connection,
+            )
 
     def decide_suggestion(
         self,
@@ -735,7 +828,7 @@ class Database:
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT kind, value_json FROM suggestions "
-                "WHERE id = ? AND job_id = ?",
+                "WHERE id = ? AND job_id = ? AND deleted_at IS NULL",
                 (suggestion_id, job_id),
             ).fetchone()
             if row is None:

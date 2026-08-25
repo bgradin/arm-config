@@ -16,6 +16,7 @@ from arm.patch import (
 )
 from ..importer import register_manifest
 from ..service import Application
+from ..service import RequestHandler
 from ..web import static_asset
 
 from .helpers import config_for, database_for, review_job
@@ -51,6 +52,75 @@ class ArmPatchContractTests(unittest.TestCase):
 
 
 class ServiceSmokeTests(unittest.TestCase):
+    def test_inline_field_suggestions_require_high_confidence(self) -> None:
+        suggestions = [
+            {
+                "id": "low",
+                "kind": "show_name",
+                "status": "pending",
+                "confidence": 0.89,
+            },
+            {
+                "id": "high",
+                "kind": "season",
+                "status": "pending",
+                "confidence": 0.90,
+            },
+        ]
+
+        fields = Application._field_suggestions(suggestions)
+
+        self.assertNotIn("show_name", fields)
+        self.assertEqual(fields["season"]["id"], "high")
+
+    def test_low_confidence_order_can_be_explicitly_accepted(self) -> None:
+        suggestion = {
+            "id": "suggestion-order",
+            "job_id": "job-1",
+            "kind": "episode_order",
+            "confidence": 0.58,
+            "value": {"source_ids": ["source-1"]},
+        }
+        assignments = []
+        test_case = self
+
+        class FakeDatabase:
+            def get_suggestion(self, suggestion_id):
+                test_case.assertEqual(suggestion_id, suggestion["id"])
+                return suggestion
+
+            def decide_suggestion(self, job_id, suggestion_id, action):
+                test_case.assertEqual(
+                    (job_id, suggestion_id, action),
+                    ("job-1", suggestion["id"], "accepted"),
+                )
+
+            def get_job(self, job_id):
+                test_case.assertEqual(job_id, "job-1")
+                return {"season": 1}
+
+            def list_assets(self, job_id):
+                test_case.assertEqual(job_id, "job-1")
+                return [{"id": "asset-1", "source_title_id": "source-1"}]
+
+            def assign_asset(self, *args, **kwargs):
+                assignments.append((args, kwargs))
+
+        handler = RequestHandler.__new__(RequestHandler)
+        handler.server = SimpleNamespace(
+            app=SimpleNamespace(database=FakeDatabase())
+        )
+
+        handler._decide_suggestion(
+            "job-1",
+            suggestion,
+            "accepted",
+            {"start": "1"},
+        )
+
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0][1]["episode_start"], 1)
+
     def test_dashboard_and_review_page_render_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = config_for(Path(temporary))
@@ -87,6 +157,45 @@ class ServiceSmokeTests(unittest.TestCase):
 
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", review)
             self.assertNotIn("<script>alert(1)</script>", review)
+
+    def test_delete_operations_soft_delete_and_keep_related_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = config_for(Path(temporary))
+            database = database_for(config)
+            job_id = review_job(config, database, [("episode.mkv", b"episode")])
+            database.add_suggestions(
+                job_id,
+                "manifest-hash",
+                [
+                    {
+                        "kind": "show_name",
+                        "value": {"name": "Example Show"},
+                        "confidence": 0.95,
+                        "evidence": [],
+                        "contradictions": [],
+                        "analyzer": "test",
+                        "analyzer_version": "1",
+                    }
+                ],
+            )
+            suggestion_id = database.list_suggestions(job_id)[0]["id"]
+            task_id = database.enqueue("analyze", job_id)
+
+            database.delete_suggestion(job_id, suggestion_id)
+            database.delete_job(job_id)
+
+            self.assertIsNone(database.get_job(job_id))
+            self.assertIsNone(database.get_suggestion(suggestion_id))
+            self.assertEqual(database.list_jobs(), [])
+            self.assertEqual(len(database.list_assets(job_id)), 1)
+            deleted_job = database.get_job(job_id, include_deleted=True)
+            deleted_suggestion = database.get_suggestion(
+                suggestion_id, include_deleted=True
+            )
+            self.assertIsNotNone(deleted_job["deleted_at"])
+            self.assertIsNotNone(deleted_suggestion["deleted_at"])
+            self.assertEqual(database.list_tasks(job_id)[0]["id"], task_id)
+            self.assertEqual(database.list_tasks(job_id)[0]["status"], "cancelled")
 
 
 class IdempotencyTests(unittest.TestCase):

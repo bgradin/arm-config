@@ -3,13 +3,10 @@
 {% macro field_suggestion(field) %}
   {% set suggestion = field_suggestions.get(field) %}
   {% if suggestion and suggestion.status == "pending" %}
-    <form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="suggestion-form" data-xhr>
-      <input type="hidden" name="action" value="accepted">
-      {% if suggestion.kind == "show_name" %}{% set suggested_value = suggestion.value.get("name") %}
-      {% elif suggestion.kind == "media_type" %}{% set suggested_value = suggestion.value.get("media_type") %}
-      {% else %}{% set suggested_value = suggestion.value.get("season") %}{% endif %}
-      <button class="suggestion-link" type="submit">Suggested: {{ suggested_value }}</button>
-    </form>
+    {% if suggestion.kind == "show_name" %}{% set suggested_value = suggestion.value.get("name") %}
+    {% elif suggestion.kind == "media_type" %}{% set suggested_value = suggestion.value.get("media_type") %}
+    {% else %}{% set suggested_value = suggestion.value.get("season") %}{% endif %}
+    <button class="suggestion-link" type="button" data-xhr-suggestion="{{ base_path }}/suggestions/{{ suggestion.id }}" data-suggestion-id="{{ suggestion.id }}" data-suggestion-action="accepted">Suggested: {{ suggested_value }}</button>
   {% endif %}
 {% endmacro %}
 
@@ -17,10 +14,10 @@
   <section class="job-hero">
     <div>
       <p class="eyebrow">Job</p>
-      <h2>{{ job.get("show_name") or "Unidentified disc" }}</h2>
+      <h2 data-job-name>{{ job.get("show_name") or "Unidentified disc" }}</h2>
       <p class="muted">{{ job.disc_type|capitalize }} capture · {{ job.disc_fingerprint[:12] }}</p>
     </div>
-    <span class="state state-{{ job.state }}">{{ job.state|replace("_", " ")|capitalize }}</span>
+    <span class="state state-{{ job.state }}" data-job-state>{{ job.state|replace("_", " ")|capitalize }}</span>
   </section>
 
   {% if job.get("error") %}<div class="notice error">{{ job.error }}</div>{% endif %}
@@ -33,6 +30,7 @@
     <div class="actions">
       <form method="post" action="{{ base_path }}/analyze" data-xhr><button>Analyze suggestions</button></form>
       <form method="post" action="{{ base_path }}/retry" data-xhr><button class="button-secondary">Retry failed tasks</button></form>
+      <form method="post" action="{{ base_path }}/delete" data-xhr data-confirm="Hide this job from the queue? Its database history and captured/library files will be kept."><button class="button-danger">Delete job</button></form>
     </div>
     <p class="hint">Save a show, season, and episode assignment to start moving that episode into the library automatically.</p>
   </section>
@@ -41,14 +39,14 @@
     <div class="section-heading"><div><p class="eyebrow">Metadata</p><h2>Show info</h2></div></div>
     <form method="post" action="{{ base_path }}/resolve" data-xhr>
       <div class="grid">
-        <label>Media type
+        <div class="field-with-suggestion" data-field-suggestion="resolved_media_type"><label>Media type
           <select name="resolved_media_type"><option value="">Choose one</option><option value="tv"{% if job.get("resolved_media_type") == "tv" %} selected{% endif %}>TV show</option><option value="movie"{% if job.get("resolved_media_type") == "movie" %} selected{% endif %}>Movie</option></select>
-        </label>{{ field_suggestion("resolved_media_type") }}
+        </label>{{ field_suggestion("resolved_media_type") }}</div>
         <label>Provider<input name="show_provider" value="{{ job.get('show_provider') or '' }}" placeholder="tmdb"></label>
         <label>Provider ID<input name="show_id" value="{{ job.get('show_id') or '' }}" placeholder="12345"></label>
-        <label>Name<input name="show_name" value="{{ job.get('show_name') or '' }}" placeholder="Show name"></label>{{ field_suggestion("show_name") }}
+        <div class="field-with-suggestion" data-field-suggestion="show_name"><label>Name<input name="show_name" value="{{ job.get('show_name') or '' }}" placeholder="Show name"></label>{{ field_suggestion("show_name") }}</div>
         <label>First-air year<input type="number" name="show_year" value="{{ job.get('show_year') or '' }}"></label>
-        <label>Season<input type="number" min="0" name="season" value="{{ job.get('season') if job.get('season') is not none else '' }}"></label>{{ field_suggestion("season") }}
+        <div class="field-with-suggestion" data-field-suggestion="season"><label>Season<input type="number" min="0" name="season" value="{{ job.get('season') if job.get('season') is not none else '' }}"></label>{{ field_suggestion("season") }}</div>
       </div>
       <p><button>Save show info</button></p>
     </form>
@@ -74,8 +72,8 @@
       {% for asset in assets %}
         {% set assignment = assignments_by_asset.get(asset.id, {}) %}
         {% set mapping = asset.get("metadata", {}).get("source_mapping", {}) %}
-        <article class="asset-card">
-          <div class="asset-heading"><div><strong>{{ asset.path|basename }}</strong><p class="muted">{{ asset.get("duration_seconds")|minutes }} min{% if mapping.get("method") %} · {{ mapping.get("method") }}{% endif %}</p></div><span class="state state-{{ asset.disposition }}">{{ asset.disposition|capitalize }}</span></div>
+        <article class="asset-card" data-asset-id="{{ asset.id }}">
+          <div class="asset-heading"><div><strong>{{ asset.path|basename }}</strong><p class="muted">{{ asset.get("duration_seconds")|minutes }} min{% if mapping.get("method") %} · {{ mapping.get("method") }}{% endif %}</p></div><span class="state state-{{ asset.disposition }}" data-asset-state>{{ asset.disposition|capitalize }}</span></div>
           <form method="post" action="{{ base_path }}/assets/{{ asset.id }}" data-xhr>
             <div class="grid">
               <label>What is it?<select name="disposition">{% for disposition in dispositions %}<option value="{{ disposition }}"{% if asset.disposition == disposition %} selected{% endif %}>{{ disposition|capitalize }}</option>{% endfor %}</select></label>
@@ -94,15 +92,18 @@
     </div>
   </section>
 
-  <details class="card suggestions-panel"><summary><strong>More suggestions</strong><span class="muted">Review evidence and playback order</span></summary>
-    {% for suggestion in suggestions if suggestion.kind not in ("show_name", "media_type", "season") %}
-      <article class="suggestion-card"><div class="asset-heading"><div><strong>{{ suggestion.kind|replace("_", " ")|capitalize }}</strong><p class="muted">{{ suggestion.analyzer }}</p></div><span class="confidence">{{ "%.0f%%"|format(suggestion.confidence * 100) }}</span></div>
+  <details class="card suggestions-panel"><summary><strong>Suggestions</strong><span class="muted">Review evidence and playback order</span></summary>
+    <div data-suggestions-list>
+    {% for suggestion in suggestions %}
+      <article class="suggestion-card" data-suggestion-card data-suggestion-id="{{ suggestion.id }}"><div class="asset-heading"><div><strong>{{ suggestion.kind|replace("_", " ")|capitalize }}</strong><p class="muted">{{ suggestion.analyzer }}</p></div><span class="confidence">{{ "%.0f%%"|format(suggestion.confidence * 100) }}</span></div>
         {% if suggestion.kind == "episode_candidates" %}<p class="hint">These files look like episodes. Accepting marks them as episodes; assign numbers below.</p>{% endif %}
         {% if suggestion.kind == "episode_order" %}<p class="hint">Accepting applies this order to the mapped assets.</p>{% endif %}
-        {% if suggestion.status == "pending" %}<form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="actions" data-xhr>{% if suggestion.kind == "episode_order" %}<label class="compact-label">Start at <input type="number" min="1" name="start" value="1"></label>{% endif %}<button name="action" value="accepted">Accept</button><button class="button-secondary" name="action" value="rejected">Reject</button></form>{% else %}<span class="state">{{ suggestion.status|capitalize }}</span>{% endif %}
+        {% if suggestion.status == "pending" %}<form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="actions" data-xhr data-suggestion-form data-suggestion-decision-form data-suggestion-id="{{ suggestion.id }}">{% if suggestion.kind == "episode_order" %}<label class="compact-label">Start at <input type="number" min="1" name="start" value="1"></label>{% endif %}<button name="action" value="accepted">Accept</button><button class="button-secondary" name="action" value="rejected">Reject</button></form>{% else %}<span class="state" data-suggestion-state>{{ suggestion.status|capitalize }}</span>{% endif %}
+        <form method="post" action="{{ base_path }}/suggestions/{{ suggestion.id }}" class="actions" data-xhr data-suggestion-form data-suggestion-id="{{ suggestion.id }}" data-confirm="Hide this suggestion from active review? Its database record will be retained."><input type="hidden" name="action" value="deleted"><button class="button-danger">Delete</button></form>
         <details><summary>Evidence</summary><ul>{% for item in suggestion.evidence %}<li>{{ item.get("message") }}</li>{% endfor %}</ul>{% if suggestion.contradictions %}<p class="muted">Caveats</p><ul>{% for item in suggestion.contradictions %}<li>{{ item.get("message") }}</li>{% endfor %}</ul>{% endif %}</details>
       </article>
-    {% else %}<p class="muted">No additional suggestions.</p>{% endfor %}
+    {% else %}<p class="muted" data-no-suggestions>No suggestions.</p>{% endfor %}
+    </div>
   </details>
 
   <details class="card"><summary>Move history <span class="muted">{{ moves|length }} recorded</span></summary><pre>{{ moves|json_pretty }}</pre></details>

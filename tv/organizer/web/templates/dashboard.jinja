@@ -12,7 +12,7 @@
     <p class="muted">Review captured discs here. Episodes move into the library as soon as their show, season, and episode are known.</p>
     <table>
       <thead>
-        <tr><th>Disc/show</th><th>Format</th><th>State</th><th>Created</th></tr>
+        <tr><th>Disc/show</th><th>Format</th><th>State</th><th>Created</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for job in jobs %}
@@ -21,9 +21,14 @@
             <td>{{ job.disc_type }}</td>
             <td><span class="state">{{ job.state }}</span></td>
             <td>{{ job.created_at }}</td>
+            <td class="table-actions">
+              <form method="post" action="/jobs/{{ job.id }}/delete" data-xhr data-confirm="Hide this job from the queue? Its database history and captured/library files will be kept.">
+                <button class="button-danger" type="submit">Delete</button>
+              </form>
+            </td>
           </tr>
         {% else %}
-          <tr><td colspan="4">No jobs yet.</td></tr>
+          <tr><td colspan="5">No jobs yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>

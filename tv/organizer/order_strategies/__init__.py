@@ -3,13 +3,11 @@
 from .bdj_runtime_trace import BdjRuntimeTraceStrategy
 from .dvd_navigation import DvdNavigationStrategy
 from .hdmv_navigation import HdmvNavigationStrategy
-from .playlist_heuristics import PlaylistHeuristicStrategy
 
 DEFAULT_ORDER_STRATEGIES = (
     HdmvNavigationStrategy(),
     BdjRuntimeTraceStrategy(),
     DvdNavigationStrategy(),
-    PlaylistHeuristicStrategy(),
 )
 
 __all__ = [
@@ -17,5 +15,4 @@ __all__ = [
     "BdjRuntimeTraceStrategy",
     "DvdNavigationStrategy",
     "HdmvNavigationStrategy",
-    "PlaylistHeuristicStrategy",
 ]

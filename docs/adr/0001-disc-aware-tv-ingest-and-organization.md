@@ -234,8 +234,6 @@ Initial strategy modules are:
 - `bdj_runtime_trace`: sandboxed BD-J/menu execution with playlist-event
   recording;
 - `dvd_navigation`: DVD VM analysis or a libdvdnav-backed interaction trace;
-- `playlist_heuristics`: duration, chapter, stream, title-table, and clip-order
-  inference, capped below high confidence when used alone.
 
 An episode-order suggestion may be high confidence only when:
 
